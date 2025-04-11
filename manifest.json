@@ -1,0 +1,35 @@
+{
+    "manifest_version": 3,
+    "name": "Easy Recorder",
+    "version": "1.0",
+    "description": "A simple screen recording and screenshot extension. 一个简单的屏幕录制和截图插件",
+    "icons": {
+        "16": "favicon/web-app-manifest-192x192.png",
+        "32": "favicon/web-app-manifest-192x192.png",
+        "48": "favicon/web-app-manifest-192x192.png",
+        "128": "favicon/web-app-manifest-192x192.png"
+    },
+    "action": {
+        "default_popup": "popup.html",
+        "default_icon": {
+            "16": "favicon/web-app-manifest-192x192.png",
+            "32": "favicon/web-app-manifest-192x192.png",
+            "48": "favicon/web-app-manifest-192x192.png",
+            "128": "favicon/web-app-manifest-192x192.png"
+        }
+    },
+    "permissions": [
+        "storage",
+        "activeTab",
+        "scripting"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_security_policy": {
+        "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    }
+}
