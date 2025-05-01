@@ -8,8 +8,8 @@ var ffmpegInstance = null;
 // 国际化文本配置
 var i18nTexts = {
   zh: {
-    title: "多功能录屏助手",
-    header: "多功能录屏助手",
+    title: "录屏助手",
+    header: "录屏助手",
     screenshot: "截图",
     captureScreenshot: "捕获截图",
     recording: "录制",
@@ -38,9 +38,9 @@ var i18nTexts = {
     toggleLanguage: "切换语言",
     toggleTheme: "切换主题",
     settings: "设置",
-    screenshotTooltip: "捕获当前屏幕 (Ctrl+P)",
-    startRecordingTooltip: "开始录制 (Ctrl+R)",
-    stopRecordingTooltip: "停止录制 (Ctrl+S)",
+    screenshotTooltip: "捕获当前屏幕",
+    startRecordingTooltip: "开始录制",
+    stopRecordingTooltip: "停止录制",
     autoSave: "自动保存：",
     enabled: "启用",
     disabled: "禁用",
@@ -48,7 +48,9 @@ var i18nTexts = {
     fileNameFormat: "文件名格式：",
     recordingHistory: "录制历史",
     statusError: "错误：",
-    statusCountdown: "将在 "
+    statusCountdown: "将在 ",
+    download: "下载",
+    delete: "删除"
   },
   en: {
     title: "Easy Recorder",
@@ -56,15 +58,15 @@ var i18nTexts = {
     screenshot: "Screenshot",
     captureScreenshot: "Capture Screenshot",
     recording: "Recording",
-    selectRange: "Select recording range:",
+    selectRange: "Select Recording Range:",
     fullDesktop: "Full Screen",
     browserWindow: "Window",
     customArea: "Browser Tab",
     startRecording: "Start Recording",
     stopRecording: "Stop Recording",
     statusRecording: "Recording...",
-    statusStopped: "Recording stopped",
-    statusScreenshot: "Screenshot captured",
+    statusStopped: "Recording Stopped",
+    statusScreenshot: "Screenshot Captured",
     duration: "Duration:",
     size: "Size:",
     quality: "Quality:",
@@ -73,17 +75,17 @@ var i18nTexts = {
     low: "Low",
     audio: "Audio",
     video: "Video",
-    both: "Video & Audio",
-    selectAudio: "Select audio source:",
+    both: "Video and Audio",
+    selectAudio: "Select Audio Source:",
     systemAudio: "System Audio",
     microphone: "Microphone",
     none: "No Audio",
     toggleLanguage: "Toggle Language",
     toggleTheme: "Toggle Theme",
     settings: "Settings",
-    screenshotTooltip: "Capture current screen (Ctrl+P)",
-    startRecordingTooltip: "Start recording (Ctrl+R)",
-    stopRecordingTooltip: "Stop recording (Ctrl+S)",
+    screenshotTooltip: "Capture Current Screen",
+    startRecordingTooltip: "Start Recording",
+    stopRecordingTooltip: "Stop Recording",
     autoSave: "Auto Save:",
     enabled: "Enabled",
     disabled: "Disabled",
@@ -91,7 +93,9 @@ var i18nTexts = {
     fileNameFormat: "File Name Format:",
     recordingHistory: "Recording History",
     statusError: "Error:",
-    statusCountdown: "Will start in "
+    statusCountdown: "Starting in ",
+    download: "Download",
+    delete: "Delete"
   }
 };
 
@@ -103,6 +107,22 @@ var recordingStartTime = null;
 var recordingTimer = null;
 var isRecording = false;
 var recordingInterval = null;
+
+// 添加全局变量，防止同时触发多次录制请求
+let pendingRecordingRequest = false;
+
+// 添加新的状态变量来跟踪媒体流的获取状态
+let isGettingMedia = false;
+
+// 添加新的状态管理
+const RecordingState = {
+  IDLE: 'idle',
+  PREPARING: 'preparing',
+  RECORDING: 'recording',
+  STOPPING: 'stopping'
+};
+
+let currentState = RecordingState.IDLE;
 
 // 初始化 FFmpeg
 async function initFFmpeg() {
@@ -159,26 +179,27 @@ function updateTexts() {
   document.querySelector("h1").textContent = i18nTexts[currentLang].header;
   document.title = i18nTexts[currentLang].title;
   
-  // 更新选择框选项
-  const rangeOptions = document.querySelectorAll("#captureRange option");
-  rangeOptions[0].textContent = i18nTexts[currentLang].fullDesktop;
-  rangeOptions[1].textContent = i18nTexts[currentLang].browserWindow;
-  rangeOptions[2].textContent = i18nTexts[currentLang].customArea;
+  // 更新悬浮提示
+  const langToggle = document.getElementById("langToggle");
+  if (langToggle) {
+    langToggle.title = i18nTexts[currentLang].toggleLanguage;
+  }
   
-  const audioOptions = document.querySelectorAll("#audioSource option");
-  audioOptions[0].textContent = i18nTexts[currentLang].none;
-  audioOptions[1].textContent = i18nTexts[currentLang].systemAudio;
-  audioOptions[2].textContent = i18nTexts[currentLang].microphone;
-  
-  const qualityOptions = document.querySelectorAll("#qualitySelect option");
-  qualityOptions[0].textContent = i18nTexts[currentLang].high;
-  qualityOptions[1].textContent = i18nTexts[currentLang].medium;
-  qualityOptions[2].textContent = i18nTexts[currentLang].low;
+  const themeToggle = document.getElementById("themeToggle");
+  if (themeToggle) {
+    themeToggle.title = i18nTexts[currentLang].toggleTheme;
+  }
   
   // 更新状态文本
   if (!isRecording) {
     document.getElementById("status").textContent = i18nTexts[currentLang].statusStopped;
   }
+
+  // 更新历史记录列表
+  chrome.storage.local.get(['recordingHistory'], (result) => {
+    const history = result.recordingHistory || [];
+    updateHistoryList(history);
+  });
 }
 
 // 更新录制状态
@@ -236,21 +257,17 @@ function initTheme() {
     themeToggle.textContent = theme === "dark" ? "☀️" : "🌙";
   });
   
-  // 监听主题切换按钮
-  themeToggle.addEventListener("click", () => {
-    const currentTheme = document.documentElement.getAttribute("data-theme");
-    const newTheme = currentTheme === "dark" ? "light" : "dark";
-    document.documentElement.setAttribute("data-theme", newTheme);
-    themeToggle.textContent = newTheme === "dark" ? "☀️" : "🌙";
-    chrome.storage.local.set({ theme: newTheme });
-  });
-  
-  // 监听系统主题变化
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
-    if (!chrome.storage.local.get("theme")) {
-      document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
-    }
-  });
+  // 不再在这里添加事件监听器，统一在DOMContentLoaded中添加
+}
+
+// 切换主题函数
+function toggleTheme() {
+  console.log('切换主题');
+  const currentTheme = document.documentElement.getAttribute("data-theme");
+  const newTheme = currentTheme === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", newTheme);
+  document.getElementById("themeToggle").textContent = newTheme === "dark" ? "☀️" : "🌙";
+  chrome.storage.local.set({ theme: newTheme });
 }
 
 // 键盘快捷键支持
@@ -279,7 +296,7 @@ function initKeyboardShortcuts() {
   });
 }
 
-// 录制倒计时
+// 倒计时函数
 function startCountdown(seconds, callback) {
   let count = seconds;
   const status = document.getElementById("status");
@@ -302,9 +319,9 @@ function startCountdown(seconds, callback) {
 }
 
 // 保存到历史记录
-function saveToHistory(blob) {
+function saveToHistory(blob, fileName) {
   const historyItem = {
-    name: generateFileName(),
+    name: fileName,
     size: blob.size,
     date: new Date().toISOString(),
     url: URL.createObjectURL(blob)
@@ -343,8 +360,8 @@ function updateHistoryList(history) {
         <span>${new Date(item.date).toLocaleString()}</span>
       </div>
       <div class="history-actions">
-        <button class="download-btn" data-url="${item.url}">下载</button>
-        <button class="delete-btn" data-date="${item.date}">删除</button>
+        <button class="download-btn" data-url="${item.url}">${i18nTexts[currentLang].download}</button>
+        <button class="delete-btn" data-date="${item.date}">${i18nTexts[currentLang].delete}</button>
       </div>
     </div>
   `).join('');
@@ -376,22 +393,11 @@ function updateHistoryList(history) {
 
 // 获取录制约束参数
 function getCaptureConstraints() {
-  const range = document.getElementById('captureRange').value;
-  
   const constraints = {
     video: {
       mediaSource: 'screen'
     }
   };
-
-  // 设置录制范围
-  if (range === 'window') {
-    constraints.video.displaySurface = 'window';
-  } else if (range === 'browser') {
-    constraints.video.displaySurface = 'browser';
-  } else if (range === 'area') {
-    constraints.video.displaySurface = 'screen';
-  }
 
   return constraints;
 }
@@ -404,44 +410,215 @@ function generateFileName() {
   return `recording_${date}_${time}.webm`;
 }
 
-// 添加视频预览元素
-function addVideoPreview() {
-  const previewContainer = document.createElement('div');
-  previewContainer.id = 'videoPreview';
-  previewContainer.className = 'video-preview';
-  previewContainer.style.display = 'none'; // 初始隐藏
-  previewContainer.innerHTML = `
-    <video id="previewVideo" autoplay muted></video>
-    <div class="preview-stats">
-      <div id="previewDuration">00:00:00</div>
-      <div id="previewSize">0 B</div>
-    </div>
-  `;
-  document.body.appendChild(previewContainer);
-}
-
-// 显示预览窗口
-function showPreview() {
-  const preview = document.getElementById('videoPreview');
-  if (preview) {
-    preview.style.display = 'block';
-  }
-}
-
-// 隐藏预览窗口
-function hidePreview() {
-  const preview = document.getElementById('videoPreview');
-  if (preview) {
-    preview.style.display = 'none';
-  }
-}
-
 // 更新预览视频
 function updatePreviewVideo(stream) {
-  const previewVideo = document.getElementById('previewVideo');
-  if (previewVideo) {
-    previewVideo.srcObject = stream;
+  try {
+    console.log('更新预览视频', stream);
+    const previewVideo = document.getElementById('previewVideo');
+    if (previewVideo) {
+      previewVideo.srcObject = stream;
+      previewVideo.muted = true;
+      
+      console.log('设置预览视频元素属性');
+      previewVideo.style.width = '100%';
+      previewVideo.style.height = 'auto';
+      previewVideo.style.display = 'block';
+      previewVideo.style.background = 'black';
+      
+      previewVideo.onloadedmetadata = () => {
+        console.log('预览视频元数据已加载');
+        previewVideo.play().catch(err => {
+          console.error('预览视频播放失败:', err);
+        });
+      };
+    } else {
+      console.error('预览视频元素不存在，无法更新');
+    }
+  } catch (error) {
+    console.error('更新预览视频出错:', error);
   }
+}
+
+// 更新预览窗口样式，确保可见
+function addVideoPreview() {
+  try {
+    // 如果已存在预览元素，先移除
+    const existingPreview = document.getElementById('videoPreview');
+    if (existingPreview) {
+      console.log('移除已存在的预览窗口');
+      existingPreview.remove();
+    }
+    
+    console.log('添加视频预览元素');
+    
+    // 创建预览容器
+    const previewContainer = document.createElement('div');
+    previewContainer.id = 'videoPreview';
+    previewContainer.className = 'video-preview';
+    
+    // 确保CSS样式被应用
+    document.head.insertAdjacentHTML('beforeend', `
+      <style>
+        .video-preview {
+          position: fixed;
+          top: 100px;
+          right: 20px;
+          width: 320px;
+          height: auto;
+          z-index: 2147483647;
+          border-radius: 8px;
+          overflow: hidden;
+          box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+          cursor: move;
+          background: black;
+          border: 2px solid #f44336;
+          padding: 0;
+          margin: 0;
+          max-width: 320px; /* 限制最大宽度 */
+          resize: none; /* 禁止调整大小 */
+        }
+        .video-preview video {
+          width: 100%;
+          height: auto;
+          display: block;
+          background: black;
+          margin: 0;
+          padding: 0;
+        }
+        .video-preview-stats {
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          display: flex;
+          justify-content: space-between;
+          padding: 8px 12px;
+          background: rgba(244,67,54,0.9);
+          color: white;
+          font-size: 12px;
+          font-weight: bold;
+        }
+        .close-button {
+          position: absolute;
+          top: 5px;
+          right: 5px;
+          cursor: pointer;
+          background: rgba(0,0,0,0.5);
+          border-radius: 50%;
+          width: 20px;
+          height: 20px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          color: white;
+          z-index: 2147483648;
+        }
+      </style>
+    `);
+    
+    // 设置容器样式 - 初始设为隐藏
+    previewContainer.style.display = 'none';
+    
+    // 使用模板字符串一次性创建所有内容
+    previewContainer.innerHTML = `
+      <div style="width:100%; height:100%; position:relative;">
+        <video id="previewVideo" style="width:100%; height:auto; display:block; background:black; margin:0; padding:0;"></video>
+        <div class="video-preview-stats">
+          <div id="previewDuration">00:00:00</div>
+          <div id="previewSize">0 MB</div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(previewContainer);
+    
+    // 为整个预览容器添加拖动功能
+    makePreviewDraggable(previewContainer);
+    
+    console.log('预览元素已添加');
+  } catch (error) {
+    console.error('添加视频预览元素失败:', error);
+  }
+}
+
+// 改进的拖动功能，确保在整个预览窗口区域内点击都能拖动
+function makePreviewDraggable(element) {
+  let isDragging = false;
+  let startX, startY;
+  let elementX, elementY;
+  
+  // 开始拖动
+  element.addEventListener('mousedown', function(e) {
+    // 跳过关闭按钮的点击
+    if (e.target.classList.contains('close-button') || e.target.parentElement.classList.contains('close-button')) {
+      return;
+    }
+    
+    isDragging = true;
+    
+    // 记录起始位置
+    startX = e.clientX;
+    startY = e.clientY;
+    
+    // 元素当前位置
+    const rect = element.getBoundingClientRect();
+    elementX = rect.left;
+    elementY = rect.top;
+    
+    // 防止拖动时出现文本选择
+    e.preventDefault();
+  });
+  
+  // 拖动移动 - 限制在弹窗范围内
+  document.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    
+    // 计算移动距离
+    const moveX = e.clientX - startX;
+    const moveY = e.clientY - startY;
+    
+    // 获取popup的尺寸
+    const popup = document.querySelector('.popup');
+    const popupRect = popup ? popup.getBoundingClientRect() : {
+      left: 0,
+      top: 0,
+      right: window.innerWidth,
+      bottom: window.innerHeight,
+      width: window.innerWidth,
+      height: window.innerHeight
+    };
+    
+    // 计算新位置
+    let newLeft = elementX + moveX;
+    let newTop = elementY + moveY;
+    
+    // 元素自身尺寸
+    const elementRect = element.getBoundingClientRect();
+    const elementWidth = elementRect.width;
+    const elementHeight = elementRect.height;
+    
+    // 限制在弹窗内
+    if (newLeft < popupRect.left) newLeft = popupRect.left;
+    if (newTop < popupRect.top) newTop = popupRect.top;
+    if (newLeft + elementWidth > popupRect.right) newLeft = popupRect.right - elementWidth;
+    if (newTop + elementHeight > popupRect.bottom) newTop = popupRect.bottom - elementHeight;
+    
+    // 更新位置
+    element.style.left = newLeft + 'px';
+    element.style.top = newTop + 'px';
+    element.style.right = 'auto';
+    element.style.bottom = 'auto';
+  });
+  
+  // 结束拖动
+  document.addEventListener('mouseup', function() {
+    isDragging = false;
+  });
+  
+  // 鼠标离开浏览器窗口
+  document.addEventListener('mouseleave', function() {
+    isDragging = false;
+  });
 }
 
 // 更新预览统计信息
@@ -463,176 +640,56 @@ function updatePreviewStats() {
   }
 }
 
-// 更新扩展图标状态
-function updateExtensionIcon(isRecording) {
-  const iconPath = isRecording ? 'favicon/web-app-manifest-512x512.png' : 'favicon/web-app-manifest-192x192.png';
-  chrome.action.setIcon({ path: iconPath });
-}
-
-// 应用颜色滤镜
-function applyColorFilter(size) {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  
-  // 加载图标
-  const img = new Image();
-  img.src = 'favicon/web-app-manifest-192x192.png';
-  
-  // 绘制图标
-  ctx.drawImage(img, 0, 0, size, size);
-  
-  // 应用红色滤镜
-  const imageData = ctx.getImageData(0, 0, size, size);
-  const data = imageData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    // 增加红色通道，减少绿色和蓝色通道
-    data[i] = Math.min(255, data[i] * 1.5);     // 红色
-    data[i + 1] = Math.max(0, data[i + 1] * 0.5); // 绿色
-    data[i + 2] = Math.max(0, data[i + 2] * 0.5); // 蓝色
-  }
-  ctx.putImageData(imageData, 0, 0);
-  
-  return ctx.getImageData(0, 0, size, size);
-}
-
-// 开始录制
-async function startRecording() {
+// 修改更新扩展图标函数
+async function updateExtensionIcon(isRecording) {
   try {
-    // 获取录制参数
-    const constraints = getCaptureConstraints();
-
-    // 根据音频源设置添加音频
-    const audioSource = document.getElementById('audioSource').value;
-    if (audioSource !== 'none') {
-      if (audioSource === 'systemAudio') {
-        constraints.audio = true;
-      } else if (audioSource === 'microphone') {
-        constraints.audio = true;
-      }
-    }
-
-    // 请求屏幕共享
-    const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
-    
-    // 配置 MediaRecorder
-    const options = {
-      mimeType: 'video/webm;codecs=vp9',
-      videoBitsPerSecond: document.getElementById('qualitySelect').value === 'high' ? 8000000 :
-                         document.getElementById('qualitySelect').value === 'medium' ? 4000000 : 2000000
+    // 使用简单的路径，确保图标存在
+    const iconPath = {
+      "16": `icons/${isRecording ? 'recording' : 'default'}_16.png`,
+      "32": `icons/${isRecording ? 'recording' : 'default'}_32.png`,
+      "48": `icons/${isRecording ? 'recording' : 'default'}_48.png`,
+      "128": `icons/${isRecording ? 'recording' : 'default'}_128.png`
     };
 
-    mediaRecorder = new MediaRecorder(stream, options);
-    recordedChunks = [];
-    
-    // 监听数据可用事件
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        recordedChunks.push(event.data);
-      }
-    };
-
-    // 监听录制停止事件
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(recordedChunks, { type: 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = generateFileName();
-      a.click();
-      
-      URL.revokeObjectURL(url);
-      stream.getTracks().forEach(track => track.stop());
-      
-      // 保存到历史记录
-      saveToHistory(blob);
-      
-      // 重置状态
-      isRecording = false;
-      document.getElementById('startRec').disabled = false;
-      document.getElementById('stopRec').disabled = true;
-      document.getElementById('status').textContent = i18nTexts[currentLang].statusStopped;
-      clearInterval(recordingInterval);
-      
-      // 隐藏预览
-      hidePreview();
-    };
-
-    // 开始倒计时
-    startCountdown(3, () => {
-      // 开始实际录制
-      recordingStartTime = Date.now();
-      mediaRecorder.start(1000); // 每秒收集一次数据
-      isRecording = true;
-      
-      // 更新UI状态
-      document.getElementById('startRec').disabled = true;
-      document.getElementById('stopRec').disabled = false;
-      document.getElementById('status').textContent = i18nTexts[currentLang].statusRecording;
-      
-      // 显示预览窗口并更新视频源
-      showPreview();
-      updatePreviewVideo(stream);
-      
-      // 开始更新录制统计
-      recordingInterval = setInterval(() => {
-        updateRecordingStats();
-        updatePreviewStats();
-        
-        // 检查最大时长
-        chrome.storage.local.get(['settings'], (result) => {
-          const settings = result.settings || { maxDuration: 30 };
-          const duration = Math.floor((Date.now() - recordingStartTime) / 1000 / 60);
-          if (settings.maxDuration > 0 && duration >= settings.maxDuration) {
-            stopRecording();
-          }
-        });
-      }, 1000);
-      
-      // 添加录制指示器
-      addRecordingIndicator();
+    await chrome.action.setIcon({ path: iconPath }).catch(() => {
+      console.log('图标更新失败，使用默认图标');
     });
-
-  } catch (err) {
-    console.error('录制错误:', err);
-    showError(currentLang === 'zh' ? '录制失败，请检查权限设置' : 'Recording failed, please check permissions');
+  } catch (error) {
+    console.error('更新图标出错:', error);
   }
 }
 
-// 停止录制
-function stopRecording() {
-  if (mediaRecorder && isRecording) {
-    try {
-      mediaRecorder.stop();
-      isRecording = false;
-      
-      // 更新UI状态
-      document.getElementById('startRec').disabled = false;
-      document.getElementById('stopRec').disabled = true;
-      document.getElementById('status').textContent = i18nTexts[currentLang].statusStopped;
-      
-      // 清除定时器
-      clearInterval(recordingInterval);
-      
-      // 移除录制指示器
-      removeRecordingIndicator();
-      
-      // 更新扩展图标
-      updateExtensionIcon(false);
-      
-      // 保存录制状态到存储
-      chrome.storage.local.set({ isRecording: false });
-    } catch (err) {
-      console.error('停止录制错误:', err);
-      showError(currentLang === 'zh' ? '停止录制失败' : 'Failed to stop recording');
+// 改进与background script的通信
+async function sendMessageToBackground(message) {
+  try {
+    // 检查background script是否存在
+    const backgroundPage = await chrome.runtime.getBackgroundPage();
+    if (!backgroundPage) {
+      console.warn('Background page不存在');
+      return;
     }
+
+    // 发送消息
+    return await chrome.runtime.sendMessage(message);
+  } catch (error) {
+    console.error('发送消息到background失败:', error);
+    return null;
   }
+}
+
+// 切换语言
+function toggleLanguage() {
+  currentLang = currentLang === 'zh' ? 'en' : 'zh';
+  updateTexts();
+  chrome.storage.local.set({ language: currentLang });
+  console.log('语言已切换到:', currentLang);
 }
 
 // 添加录制指示器
 function addRecordingIndicator() {
+  // 先移除现有的录制指示器，避免重复
+  removeRecordingIndicator();
+  
   const status = document.getElementById('status');
   const indicator = document.createElement('div');
   indicator.className = 'recording-indicator';
@@ -654,12 +711,35 @@ function removeRecordingIndicator() {
 // 显示错误信息
 function showError(message) {
   const status = document.getElementById('status');
-  status.textContent = message;
-  status.className = 'error';
-  setTimeout(() => {
-    status.textContent = '';
-    status.className = '';
-  }, 3000);
+  
+  // 检查特定的错误类型，为其提供更友好的显示
+  if (message.includes('无法在浏览器内部页面上录制')) {
+    // 特殊处理浏览器内部页面错误
+    status.innerHTML = `
+      <div class="error-message">
+        <div class="error-icon">⚠️</div>
+        <div class="error-text">
+          <strong>${currentLang === 'zh' ? '提示' : 'Notice'}</strong>: 
+          ${currentLang === 'zh' ? 
+            '无法在浏览器内部页面上录制。<br>请打开一个普通网页（如 <a href="https://www.baidu.com" target="_blank">百度</a> 或 <a href="https://www.google.com" target="_blank">Google</a>）后再试。' : 
+            'Cannot record on browser internal pages.<br>Please open a regular webpage (like <a href="https://www.baidu.com" target="_blank">Baidu</a> or <a href="https://www.google.com" target="_blank">Google</a>) and try again.'}
+        </div>
+      </div>
+    `;
+    status.className = 'warning';
+  } else {
+    // 普通错误处理
+    status.textContent = message;
+    status.className = 'error';
+  }
+  
+  // 不自动清除特殊错误消息，让用户有充分时间阅读
+  if (!message.includes('无法在浏览器内部页面上录制')) {
+    setTimeout(() => {
+      status.textContent = '';
+      status.className = '';
+    }, 3000);
+  }
 }
 
 // 显示下载链接
@@ -723,97 +803,571 @@ async function captureScreenshot() {
   }
 }
 
-// 初始化
-function init() {
-  // 初始化语言（根据系统语言）
-  const systemLang = navigator.language.toLowerCase();
-  currentLang = systemLang.startsWith('zh') ? 'zh' : 'en';
-  updateTexts();
-  
-  // 初始化主题
-  initTheme();
-  
-  
-  // 添加视频预览元素
-  addVideoPreview();
-  
-  // 添加事件监听器
-  document.getElementById('screenshotBtn').addEventListener('click', captureScreenshot);
-  document.getElementById('startRec').addEventListener('click', startRecording);
-  document.getElementById('stopRec').addEventListener('click', stopRecording);
-  // document.getElementById('langToggle').addEventListener('click', toggleLanguage);
-  document.getElementById('themeToggle').addEventListener('click', toggleTheme);
-  
-  // 初始化录制统计信息显示
-  const statsContainer = document.createElement("div");
-  statsContainer.id = "recordingStats";
-  statsContainer.className = "recording-stats";
-  statsContainer.innerHTML = `
-    <div id="recordingDuration">${i18nTexts[currentLang].duration} 00:00:00</div>
-    <div id="recordingSize">${i18nTexts[currentLang].size} 0 B</div>
-  `;
-  document.getElementById("status").appendChild(statsContainer);
+// 检查录制状态
+function checkRecordingStatus() {
+  if (currentState === RecordingState.RECORDING && mediaRecorder) {
+    if (mediaRecorder.state === 'inactive' || !window.recordingStream?.active) {
+      console.warn('录制已中断');
+      cleanupRecordingResources();
+    }
+  }
 }
 
-// 初始化
-document.addEventListener("DOMContentLoaded", function() {
-  // 初始化语言（根据系统语言）
-  const systemLang = navigator.language.toLowerCase();
-  currentLang = systemLang.startsWith('zh') ? 'zh' : 'en';
-  updateTexts();
-  
-  // 初始化主题
-  initTheme();
-  
-  // 添加视频预览元素
-  addVideoPreview();
-  
-  // 添加事件监听器
-  document.getElementById('screenshotBtn').addEventListener('click', captureScreenshot);
-  document.getElementById('startRec').addEventListener('click', startRecording);
-  document.getElementById('stopRec').addEventListener('click', stopRecording);
-  // document.getElementById('langToggle').addEventListener('click', toggleLanguage);
-  document.getElementById('themeToggle').addEventListener('click', toggleTheme);
-  
-  // 初始化录制统计信息显示
-  const statsContainer = document.createElement("div");
-  statsContainer.id = "recordingStats";
-  statsContainer.className = "recording-stats";
-  statsContainer.innerHTML = `
-    <div id="recordingDuration">${i18nTexts[currentLang].duration} 00:00:00</div>
-    <div id="recordingSize">${i18nTexts[currentLang].size} 0 B</div>
-  `;
-  document.getElementById("status").appendChild(statsContainer);
-  
-  // 监听插件图标点击事件
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'restorePopup') {
-      restorePopup();
+// 显示预览窗口
+function showPreview() {
+  try {
+    console.log('显示预览窗口');
+    const preview = document.getElementById('videoPreview');
+    if (preview) {
+      preview.style.display = 'block';
+      console.log('预览窗口已显示, display:', preview.style.display);
+      
+      // 确保预览窗口在视口中可见
+      const popupRect = document.querySelector('.popup')?.getBoundingClientRect() || {
+        left: 0,
+        top: 0,
+        right: window.innerWidth,
+        bottom: window.innerHeight
+      };
+      
+      const previewRect = preview.getBoundingClientRect();
+      
+      // 将预览放置在弹窗内的合适位置
+      // 默认放在弹窗右上角
+      let newLeft = popupRect.right - previewRect.width - 20;
+      let newTop = popupRect.top + 100;
+      
+      // 确保在弹窗内
+      if (newLeft < popupRect.left) newLeft = popupRect.left + 10;
+      if (newTop < popupRect.top) newTop = popupRect.top + 10;
+      if (newLeft + previewRect.width > popupRect.right) newLeft = popupRect.right - previewRect.width - 10;
+      if (newTop + previewRect.height > popupRect.bottom) newTop = popupRect.bottom - previewRect.height - 10;
+      
+      preview.style.left = newLeft + 'px';
+      preview.style.top = newTop + 'px';
+      preview.style.right = 'auto';
+    } else {
+      console.error('预览窗口不存在，重新创建');
+      addVideoPreview();
+      const newPreview = document.getElementById('videoPreview');
+      if (newPreview) {
+        newPreview.style.display = 'block';
+        console.log('新预览窗口已显示');
+      }
     }
-  });
+  } catch (error) {
+    console.error('显示预览窗口失败:', error);
+  }
+}
+
+// 隐藏预览窗口
+function hidePreview() {
+  const preview = document.getElementById('videoPreview');
+  if (preview) {
+    preview.style.display = 'none';
+  }
+}
+
+// 添加状态重置函数
+async function resetAllState() {
+  console.log('重置所有状态');
+  currentState = RecordingState.IDLE;
+  isRecording = false;
+  pendingRecordingRequest = false;
+  isGettingMedia = false;
+  recordingStartTime = null;
+  recordedChunks = [];
   
-  // 检查录制状态
-  chrome.storage.local.get(['isRecording'], (result) => {
-    if (result.isRecording) {
+  if (recordingInterval) {
+    clearInterval(recordingInterval);
+    recordingInterval = null;
+  }
+  
+  // 清除存储中的状态
+  try {
+    await chrome.storage.local.remove([
+      'isRecording',
+      'recordingStartTime',
+      'recordingOptions',
+      'recordedChunks',
+      'lastChunkTime'
+    ]);
+  } catch (error) {
+    console.error('清除存储状态失败:', error);
+  }
+}
+
+// 改进的初始化函数
+async function initializePopup() {
+  console.log('初始化 popup');
+  
+  try {
+    // 检查是否有正在进行的录制
+    const storage = await chrome.storage.local.get([
+      'isRecording',
+      'recordingStartTime',
+      'recordingOptions'
+    ]);
+    
+    // 验证存储的状态是否有效
+    if (storage.isRecording) {
+      // 检查录制是否真的在进行中
+      const isActuallyRecording = await verifyRecordingState();
+      
+      if (!isActuallyRecording) {
+        console.log('检测到无效的录制状态，重置状态');
+        await resetAllState();
+        return;
+      }
+      
+      // 恢复录制状态
+      console.log('恢复录制状态');
+      currentState = RecordingState.RECORDING;
       isRecording = true;
-      updateExtensionIcon(true);
+      recordingStartTime = storage.recordingStartTime;
+      
+      // 更新UI
+      document.getElementById('startRec').disabled = true;
+      const stopRecBtn = document.getElementById('stopRec');
+      stopRecBtn.disabled = false;
+      stopRecBtn.style.display = 'block';
+      
+      // 添加录制指示器
+      addRecordingIndicator();
+      
+      // 显示录制正在进行的消息
+      document.getElementById('status').textContent = currentLang === 'zh' ? 
+        '录制正在进行中' : 'Recording in progress';
+      
+      // 开始更新录制统计
+      recordingInterval = setInterval(updatePreviewStats, 1000);
+      
+      // 尝试恢复预览
+      if (storage.recordingOptions) {
+        startLocalPreview().catch(error => {
+          console.warn('恢复预览失败:', error);
+        });
+      }
+    } else {
+      // 确保状态被重置
+      await resetAllState();
     }
-  });
+  } catch (error) {
+    console.error('初始化popup时出错:', error);
+    await resetAllState();
+  }
+}
+
+// 验证录制状态是否真实有效
+async function verifyRecordingState() {
+  try {
+    // 检查是否有活动的媒体流
+    if (window.recordingStream && window.recordingStream.active) {
+      const activeTracks = window.recordingStream.getTracks().filter(track => track.readyState === 'live');
+      if (activeTracks.length > 0) {
+        return true;
+      }
+    }
+    
+    // 如果没有活动的媒体流，检查 MediaRecorder 状态
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('验证录制状态时出错:', error);
+    return false;
+  }
+}
+
+// 改进的处理录制停止函数
+async function handleRecordingStopped() {
+  console.log('处理录制停止');
   
-  // 监听页面可见性变化
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && isRecording) {
-      // 页面隐藏时，确保录制继续
-      updateExtensionIcon(true);
+  try {
+    // 如果没有录制数据，显示错误信息
+    if (!recordedChunks || recordedChunks.length === 0) {
+      console.error('No recorded chunks available');
+      showError(currentLang === 'zh' ? '录制失败，没有获取到数据' : 'Recording failed, no data available');
+      await resetAllState();
+      return;
     }
-  });
+    
+    // 创建Blob
+    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+    
+    // 生成文件名
+    const now = new Date();
+    const date = now.toISOString().split('T')[0];
+    const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+    const fileName = `recording_${date}_${time}.webm`;
+    
+    // 显示正在保存中的状态
+    document.getElementById('status').textContent = currentLang === 'zh' ? 
+      '正在保存视频...' : 'Saving video...';
+    
+    // 创建下载链接并触发下载
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    
+    // 延迟后清理
+    setTimeout(async () => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      // 更新状态文本
+      document.getElementById('status').textContent = currentLang === 'zh' ? 
+        '视频已保存: ' + fileName : 'Video saved: ' + fileName;
+      
+      // 保存到历史记录
+      await saveToHistory(blob, fileName);
+      
+      // 重置所有状态
+      await resetAllState();
+      
+      console.log('录制已完成并保存:', fileName);
+    }, 100);
+    
+  } catch (error) {
+    console.error('处理录制停止时出错:', error);
+    await resetAllState();
+    showError(currentLang === 'zh' ? '保存录制时出错' : 'Error saving recording');
+  }
+}
+
+// 获取最高质量的比特率
+function getBitrate() {
+  return 8000000; // 8 Mbps - 最高质量
+}
+
+// 改进的开始录制函数
+async function startRecording() {
+  try {
+    console.log('尝试开始录制, 当前状态:', currentState);
+    
+    // 检查当前状态
+    if (currentState !== RecordingState.IDLE) {
+      console.log('当前状态不允许开始新录制:', currentState);
+      return;
+    }
+    
+    // 设置准备状态
+    currentState = RecordingState.PREPARING;
+    
+    // 清理之前的资源
+    await resetAllState();
+    
+    // 检查标签页权限
+    const tabCheckResult = await checkIfTabCanBeRecorded();
+    if (!tabCheckResult.canRecord) {
+      currentState = RecordingState.IDLE;
+      return;
+    }
+    
+    // 更新UI状态
+    document.getElementById('startRec').disabled = true;
+    document.getElementById('status').textContent = currentLang === 'zh' ? 
+      '准备录制...' : 'Preparing recording...';
+    
+    try {
+      // 准备媒体约束
+      const constraints = {
+        video: {
+          mediaSource: 'screen'
+        },
+        audio: true // 默认启用音频，让用户在系统对话框中选择
+      };
+      
+      // 获取媒体流
+      const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+      
+      // 验证流
+      if (!stream || !stream.active || stream.getTracks().length === 0) {
+        throw new Error('无效的媒体流');
+      }
+      
+      // 保存流引用
+      window.recordingStream = stream;
+      
+      // 设置轨道结束处理
+      stream.getTracks().forEach(track => {
+        track.onended = async () => {
+          console.log('媒体轨道结束:', track.kind);
+          if (currentState === RecordingState.RECORDING) {
+            await resetAllState();
+          }
+        };
+      });
+      
+      // 创建录制器，使用最高质量设置
+      const options = {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: getBitrate()
+      };
+      
+      mediaRecorder = new MediaRecorder(stream, options);
+      recordedChunks = [];
+      
+      // 设置录制器事件
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data?.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        console.log('MediaRecorder stopped');
+        handleRecordingStopped();
+      };
+      
+      mediaRecorder.onerror = async (event) => {
+        console.error('MediaRecorder 错误:', event);
+        await resetAllState();
+        showError(currentLang === 'zh' ? '录制过程中出错' : 'Error during recording');
+      };
+      
+      // 设置预览
+      addVideoPreview();
+      const previewVideo = document.getElementById('previewVideo');
+      if (previewVideo) {
+        previewVideo.srcObject = stream;
+        previewVideo.muted = true;
+        await previewVideo.play();
+      }
+      
+      // 开始倒计时
+      startCountdown(3, async () => {
+        try {
+          // 开始录制
+          currentState = RecordingState.RECORDING;
+          isRecording = true;
+          mediaRecorder.start(1000);
+          recordingStartTime = Date.now();
+          
+          // 显示预览
+          showPreview();
+          
+          // 保存状态
+          await chrome.storage.local.set({
+            'isRecording': true,
+            'recordingStartTime': recordingStartTime
+          });
+          
+          // 更新UI
+          const stopRecBtn = document.getElementById('stopRec');
+          stopRecBtn.disabled = false;
+          stopRecBtn.style.display = 'block';
+          
+          addRecordingIndicator();
+          recordingInterval = setInterval(updatePreviewStats, 1000);
+          
+          // 改进与background的通信
+          await sendMessageToBackground({
+            action: 'startRecording'
+          });
+          
+          document.getElementById('status').textContent = currentLang === 'zh' ? 
+            '录制进行中...' : 'Recording...';
+            
+        } catch (error) {
+          console.error('开始录制时出错:', error);
+          await resetAllState();
+        }
+      });
+      
+    } catch (error) {
+      console.error('获取媒体流错误:', error);
+      
+      let errorMessage = currentLang === 'zh' ? '录制失败: ' : 'Recording failed: ';
+      if (error.name === 'NotAllowedError' || error.message.includes('用户取消')) {
+        errorMessage += currentLang === 'zh' ? '用户取消了录制' : 'Recording was cancelled';
+      } else {
+        errorMessage += error.message;
+      }
+      
+      showError(errorMessage);
+      await resetAllState();
+    }
+    
+  } catch (error) {
+    console.error('录制过程出错:', error);
+    showError(currentLang === 'zh' ? '录制失败，请检查权限设置' : 'Recording failed, please check permissions');
+    await resetAllState();
+  }
+}
+
+// 改进的停止录制函数
+async function stopRecording() {
+  console.log('停止录制, 当前状态:', currentState);
   
-  // 监听窗口关闭事件
-  window.addEventListener('beforeunload', (e) => {
-    if (isRecording) {
-      e.preventDefault();
-      e.returnValue = '';
-      return '录制正在进行中，确定要关闭窗口吗？';
+  try {
+    // 检查是否真的在录制中
+    if (currentState !== RecordingState.RECORDING) {
+      console.log('没有正在进行的录制');
+      return;
     }
-  });
+
+    // 更新状态
+    currentState = RecordingState.STOPPING;
+    document.getElementById('status').textContent = currentLang === 'zh' ? 
+      '正在停止录制...' : 'Stopping recording...';
+    
+    // 停止媒体录制器
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      console.log('停止 MediaRecorder');
+      mediaRecorder.stop();
+      
+      // 停止所有轨道
+      if (window.recordingStream) {
+        console.log('停止所有媒体轨道');
+        window.recordingStream.getTracks().forEach(track => {
+          track.stop();
+        });
+      }
+    }
+    
+    // 禁用停止按钮，防止重复点击
+    const stopRecBtn = document.getElementById('stopRec');
+    if (stopRecBtn) {
+      stopRecBtn.disabled = true;
+    }
+    
+    // 隐藏预览
+    hidePreview();
+    
+    // 移除录制指示器
+    removeRecordingIndicator();
+    
+    // 通知background脚本
+    await sendMessageToBackground({
+      action: 'stopRecording'
+    });
+    
+    // 等待handleRecordingStopped处理完成
+    // handleRecordingStopped会在mediaRecorder.onstop中被调用
+    
+  } catch (error) {
+    console.error('停止录制时出错:', error);
+    showError(currentLang === 'zh' ? '停止录制时出错' : 'Error stopping recording');
+    await resetAllState();
+  }
+}
+
+// 检查标签页是否可以录制
+async function checkIfTabCanBeRecorded() {
+  try {
+    // 获取当前标签页
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    if (!tab) {
+      showError(currentLang === 'zh' ? '无法获取当前标签页' : 'Cannot get current tab');
+      return { canRecord: false };
+    }
+    
+    // 检查是否是浏览器内部页面
+    if (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
+      showError(currentLang === 'zh' ? 
+        '无法在浏览器内部页面上录制' : 
+        'Cannot record on browser internal pages');
+      return { canRecord: false };
+    }
+    
+    return { canRecord: true, tab };
+  } catch (error) {
+    console.error('检查标签页时出错:', error);
+    showError(currentLang === 'zh' ? 
+      '检查标签页权限时出错' : 
+      'Error checking tab permissions');
+    return { canRecord: false };
+  }
+}
+
+// 修改 DOMContentLoaded 事件处理
+document.addEventListener("DOMContentLoaded", async function() {
+  console.log('DOM已加载完成');
+  
+  try {
+    // 初始化popup
+    await initializePopup();
+    
+    // 添加错误样式
+    const style = document.createElement('style');
+    style.textContent = `
+      .warning {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeeba;
+        border-radius: 4px;
+        padding: 10px;
+        margin-bottom: 15px;
+      }
+      .error-message {
+        display: flex;
+        align-items: flex-start;
+      }
+      .error-icon {
+        font-size: 20px;
+        margin-right: 10px;
+        margin-top: 2px;
+      }
+      .error-text {
+        flex: 1;
+      }
+      .error-text a {
+        color: #0056b3;
+        text-decoration: underline;
+      }
+    `;
+    document.head.appendChild(style);
+    
+    // 初始化语言
+    chrome.storage.local.get("language", (result) => {
+      const systemLang = navigator.language.toLowerCase();
+      currentLang = result.language || (systemLang.startsWith('zh') ? 'zh' : 'en');
+      updateTexts();
+    });
+    
+    // 初始化主题
+    initTheme();
+    
+    // 添加视频预览元素
+    addVideoPreview();
+    
+    // 添加事件监听器
+    document.getElementById('screenshotBtn').addEventListener('click', captureScreenshot);
+    document.getElementById('startRec').addEventListener('click', startRecording);
+    document.getElementById('stopRec').addEventListener('click', function() {
+      console.log('停止录制按钮被点击');
+      stopRecording();
+    });
+    
+    // 语言切换按钮
+    const langToggle = document.getElementById('langToggle');
+    if (langToggle) {
+      langToggle.addEventListener('click', toggleLanguage);
+    }
+    
+    // 主题切换按钮
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+      themeToggle.addEventListener('click', toggleTheme);
+    }
+    
+    // 确保停止录制按钮初始隐藏
+    const stopRecBtn = document.getElementById('stopRec');
+    if (stopRecBtn) {
+      stopRecBtn.style.display = 'none';
+      stopRecBtn.style.width = '100%';
+      stopRecBtn.style.marginTop = '16px';
+    }
+    
+  } catch (error) {
+    console.error('初始化失败:', error);
+    await resetAllState();
+  }
 });

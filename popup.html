@@ -10,38 +10,20 @@
     <div class="popup-header">
       <h1>Easy Recorder</h1>
       <div class="controls">
-        <!-- <button id="langToggle" title="Toggle Language">🌐</button> -->
+        <button id="langToggle" title="Toggle Language">🌐</button>
         <button id="themeToggle" title="Toggle Theme">🌙</button>
       </div>
     </div>
 
     <div class="main-controls">
-      <button id="screenshotBtn" title="Capture Screenshot (Ctrl+P)">
+      <button id="screenshotBtn" title="Capture Screenshot">
         <span>📸</span>
         <span id="screenshotBtnText">Screenshot</span>
       </button>
-      <button id="startRec" title="Start Recording (Ctrl+R)">
+      <button id="startRec" title="Start Recording">
         <span>🎥</span>
         <span id="startRecText">Record</span>
       </button>
-    </div>
-
-    <div class="select-container">
-      <select id="captureRange">
-        <option value="window">Window</option>
-        <option value="browser">Browser Tab</option>
-        <option value="area">Custom Area</option>
-      </select>
-      <select id="audioSource">
-        <option value="none">No Audio</option>
-        <option value="systemAudio">System Audio</option>
-        <option value="microphone">Microphone</option>
-      </select>
-      <select id="qualitySelect">
-        <option value="high">High Quality</option>
-        <option value="medium">Medium Quality</option>
-        <option value="low">Low Quality</option>
-      </select>
     </div>
 
     <div id="status" class="status"></div>
